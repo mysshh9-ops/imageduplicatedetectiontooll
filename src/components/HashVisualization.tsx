@@ -3,7 +3,7 @@ import { HashResult } from "../lib/imageHash";
 const DESCRIPTIONS: Record<string, string> = {
   ahash: "Compares each pixel to the mean luminance",
   dhash: "Captures horizontal gradient structure",
-  phash: "DCT-based, robust to scaling & compression",
+  phash: "DCT-based, robust to resizing & minor modifications",
 };
 
 function BitGrid({ bits, color }: { bits: number[]; color: string }) {

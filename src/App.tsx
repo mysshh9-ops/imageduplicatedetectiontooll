@@ -12,7 +12,7 @@ import {
   ChevronRight,
   Fingerprint,
 } from "lucide-react";
-import { computeHashes, HashResult, similarity as computeSimilarity, exactDuplicate } from "./lib/imageHash";
+import { computeHashes, HashResult, ImageHashError, similarity as computeSimilarity } from "./lib/imageHash";
 import HashVisualization from "./components/HashVisualization";
 import ComparisonView, { Match } from "./components/ComparisonView";
 
@@ -35,15 +35,21 @@ export default function App() {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [selectedImage, setSelectedImage] = useState<UploadedImage | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     const arr = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    if (arr.length === 0) return;
+    if (arr.length === 0) {
+      setErrors(["No image files were found. Please upload files in a supported image format (PNG, JPEG, WebP, GIF)."]);
+      return;
+    }
 
     setStatus("hashing");
     setProgress(0);
+    setErrors([]);
     const newImages: UploadedImage[] = [];
+    const newErrors: string[] = [];
 
     for (let i = 0; i < arr.length; i++) {
       const file = arr[i];
@@ -56,8 +62,9 @@ export default function App() {
           size: file.size,
           hash,
         });
-      } catch {
-        // skip unprocessable files
+      } catch (err) {
+        const msg = err instanceof ImageHashError ? err.message : "Could not process this file";
+        newErrors.push(`${file.name}: ${msg}`);
       }
       setProgress(Math.round(((i + 1) / arr.length) * 100));
     }
@@ -66,6 +73,7 @@ export default function App() {
     setStatus("idle");
     setProgress(0);
     setMatches([]);
+    if (newErrors.length > 0) setErrors(newErrors);
   }, []);
 
   const onDrop = useCallback(
@@ -83,13 +91,17 @@ export default function App() {
     const results: Match[] = [];
     for (let i = 0; i < images.length; i++) {
       for (let j = i + 1; j < images.length; j++) {
-        const sim = computeSimilarity(images[i].hash, images[j].hash);
-        if (sim >= threshold) {
+        const breakdown = computeSimilarity(images[i].hash, images[j].hash);
+        if (breakdown.final >= threshold) {
           results.push({
             a: images[i],
             b: images[j],
-            similarity: sim,
-            exact: exactDuplicate(images[i].hash, images[j].hash),
+            similarity: breakdown.final,
+            ahash: breakdown.ahash,
+            dhash: breakdown.dhash,
+            phash: breakdown.phash,
+            matchType: breakdown.matchType,
+            exact: breakdown.exact,
           });
         }
       }
@@ -177,7 +189,7 @@ export default function App() {
               Find <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">duplicate</span> and visually similar images instantly
             </h2>
             <p className="mt-3 text-slate-400 max-w-xl mx-auto text-balance">
-              Upload images and HashLens computes cryptographic-style fingerprints to detect near-duplicates — even after resizing, cropping, or compression.
+              Upload images and HashLens computes perceptual fingerprints to detect near-duplicates — even after resizing, compression, or minor visual modifications.
             </p>
           </section>
 
@@ -229,6 +241,33 @@ export default function App() {
               </div>
             )}
           </section>
+
+          {/* Error messages */}
+          {errors.length > 0 && (
+            <section className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 space-y-2 animate-fade-in">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-rose-300">
+                      {errors.length} file{errors.length > 1 ? "s" : ""} could not be processed
+                    </p>
+                    <ul className="text-xs text-slate-400 space-y-0.5">
+                      {errors.map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setErrors([])}
+                  className="text-xs text-slate-400 hover:text-white transition-colors shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </section>
+          )}
 
           {/* Controls */}
           {images.length >= 2 && (
@@ -315,14 +354,40 @@ export default function App() {
                           className="text-sm font-bold tabular-nums"
                           style={{
                             color:
-                              m.similarity >= 99 ? "#f43f5e" : m.similarity >= 90 ? "#f59e0b" : "#10b981",
+                              m.matchType === "exact" ? "#f43f5e" : m.matchType === "highly_similar" ? "#f59e0b" : "#10b981",
                           }}
                         >
                           {m.similarity.toFixed(1)}%
                         </span>
-                        {m.exact && (
-                          <span className="rounded-full bg-rose-500/15 text-rose-400 text-[10px] font-semibold px-2 py-0.5 border border-rose-500/20">
-                            EXACT
+                        {m.matchType !== "none" && (
+                          <span
+                            className="rounded-full text-[10px] font-semibold px-2 py-0.5 border"
+                            style={{
+                              backgroundColor:
+                                m.matchType === "exact"
+                                  ? "rgba(244,63,94,0.15)"
+                                  : m.matchType === "highly_similar"
+                                  ? "rgba(245,158,11,0.15)"
+                                  : "rgba(16,185,129,0.15)",
+                              color:
+                                m.matchType === "exact"
+                                  ? "#f43f5e"
+                                  : m.matchType === "highly_similar"
+                                  ? "#f59e0b"
+                                  : "#10b981",
+                              borderColor:
+                                m.matchType === "exact"
+                                  ? "rgba(244,63,94,0.2)"
+                                  : m.matchType === "highly_similar"
+                                  ? "rgba(245,158,11,0.2)"
+                                  : "rgba(16,185,129,0.2)",
+                            }}
+                          >
+                            {m.matchType === "exact"
+                              ? "EXACT"
+                              : m.matchType === "highly_similar"
+                              ? "HIGH"
+                              : "SIM"}
                           </span>
                         )}
                       </div>

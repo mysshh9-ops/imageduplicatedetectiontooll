@@ -1,5 +1,7 @@
 export type HashType = "ahash" | "dhash" | "phash";
 
+export type MatchType = "exact" | "highly_similar" | "similar" | "none";
+
 export interface HashResult {
   ahash: string;
   dhash: string;
@@ -9,7 +11,17 @@ export interface HashResult {
   phashBits: number[];
 }
 
+export interface SimilarityBreakdown {
+  ahash: number;
+  dhash: number;
+  phash: number;
+  final: number;
+  matchType: MatchType;
+  exact: boolean;
+}
+
 const GRID = 8;
+const TOTAL_BITS = 64;
 
 function toGrayscale(data: Uint8ClampedArray, w: number, h: number): Float32Array {
   const gray = new Float32Array(w * h);
@@ -118,10 +130,24 @@ function computePHash(img: HTMLImageElement): { hex: string; bits: number[] } {
   return { hex: bitsToHex(bits), bits };
 }
 
+export class ImageHashError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ImageHashError";
+  }
+}
+
 export async function computeHashes(file: File): Promise<HashResult> {
+  if (!file.type.startsWith("image/")) {
+    throw new ImageHashError(`Unsupported file type: ${file.type || "unknown"}`);
+  }
+
   const url = URL.createObjectURL(file);
   try {
     const img = await loadImage(url);
+    if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+      throw new ImageHashError("Image appears to be empty or corrupted");
+    }
     const gray = downscale(img, GRID);
     const a = computeAHash(gray);
     const d = computeDHash(gray);
@@ -143,7 +169,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Failed to load image"));
+    img.onerror = () => reject(new ImageHashError("Failed to decode image — the file may be corrupted or in an unsupported format"));
     img.src = url;
   });
 }
@@ -164,21 +190,53 @@ export function bitDistance(a: number[], b: number[]): number {
   return dist;
 }
 
-// Combined similarity across all three hashes (0-100)
-export function similarity(a: HashResult, b: HashResult): number {
-  const totalBits = 64;
-  const aDist = bitDistance(a.ahashBits, b.ahashBits);
-  const dDist = bitDistance(a.dhashBits, b.dhashBits);
-  const pDist = bitDistance(a.phashBits, b.phashBits);
-  const aSim = ((totalBits - aDist) / totalBits) * 100;
-  const dSim = ((totalBits - dDist) / totalBits) * 100;
-  const pSim = ((totalBits - pDist) / totalBits) * 100;
-  // Weighted blend — pHash is most discriminative
-  return 0.2 * aSim + 0.3 * dSim + 0.5 * pSim;
+/**
+ * Non-linear scoring curve. For 64-bit hashes, random pairs average Hamming
+ * distance 32, so a linear map would give unrelated images ~50%. This
+ * quadratic curve compresses unrelated pairs well below 50% while keeping
+ * true duplicates high:
+ *
+ *   dist 0  -> ~100%   (exact)
+ *   dist 3  -> ~91%    (resized/compressed)
+ *   dist 8  -> ~77%    (lightly modified)
+ *   dist 15 -> ~59%    (similar)
+ *   dist 20 -> ~47%    (borderline)
+ *   dist 32 -> ~25%    (unrelated, average random pair)
+ */
+function scoreFromDistance(dist: number): number {
+  const ratio = 1 - dist / TOTAL_BITS;
+  return Math.max(0, Math.min(100, 100 * ratio * ratio));
+}
+
+export function scoreHash(a: number[], b: number[]): number {
+  return scoreFromDistance(bitDistance(a, b));
 }
 
 export function exactDuplicate(a: HashResult, b: HashResult): boolean {
-  return (
-    a.ahash === b.ahash && a.dhash === b.dhash && a.phash === b.phash
-  );
+  return a.ahash === b.ahash && a.dhash === b.dhash && a.phash === b.phash;
+}
+
+export function classifyMatch(score: number, exact: boolean): MatchType {
+  if (exact) return "exact";
+  if (score >= 80) return "highly_similar";
+  if (score >= 60) return "similar";
+  return "none";
+}
+
+// Combined similarity across all three hashes (0-100) with per-hash breakdown
+export function similarity(a: HashResult, b: HashResult): SimilarityBreakdown {
+  const aScore = scoreHash(a.ahashBits, b.ahashBits);
+  const dScore = scoreHash(a.dhashBits, b.dhashBits);
+  const pScore = scoreHash(a.phashBits, b.phashBits);
+  // Weighted blend — pHash is most discriminative, aHash least
+  const final = 0.2 * aScore + 0.3 * dScore + 0.5 * pScore;
+  const exact = exactDuplicate(a, b);
+  return {
+    ahash: aScore,
+    dhash: dScore,
+    phash: pScore,
+    final,
+    exact,
+    matchType: classifyMatch(final, exact),
+  };
 }

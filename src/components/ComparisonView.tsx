@@ -1,12 +1,50 @@
 import { X } from "lucide-react";
 import { UploadedImage } from "../App";
 import HashVisualization from "./HashVisualization";
+import { MatchType } from "../lib/imageHash";
 
 export interface Match {
   a: UploadedImage;
   b: UploadedImage;
   similarity: number;
+  ahash: number;
+  dhash: number;
+  phash: number;
+  matchType: MatchType;
   exact: boolean;
+}
+
+const MATCH_TYPE_LABELS: Record<MatchType, string> = {
+  exact: "Exact Duplicate",
+  highly_similar: "Highly Similar",
+  similar: "Similar",
+  none: "Weak Match",
+};
+
+const MATCH_TYPE_COLORS: Record<MatchType, string> = {
+  exact: "#f43f5e",
+  highly_similar: "#f59e0b",
+  similar: "#10b981",
+  none: "#64748b",
+};
+
+function ScoreBar({ label, score, color }: { label: string; score: number; color: string }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-slate-300">{label}</span>
+        <span className="text-sm font-bold tabular-nums" style={{ color }}>
+          {score.toFixed(1)}%
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${score}%`, backgroundColor: color }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export default function ComparisonView({
@@ -16,13 +54,9 @@ export default function ComparisonView({
   match: Match;
   onClose: () => void;
 }) {
-  const { a, b, similarity, exact } = match;
-  const simColor =
-    similarity >= 99
-      ? "#f43f5e"
-      : similarity >= 90
-      ? "#f59e0b"
-      : "#10b981";
+  const { a, b, similarity, ahash, dhash, phash, matchType, exact } = match;
+  const badgeColor = MATCH_TYPE_COLORS[matchType];
+  const badgeLabel = MATCH_TYPE_LABELS[matchType];
 
   return (
     <div
@@ -30,7 +64,7 @@ export default function ComparisonView({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl"
+        className="relative w-full max-w-5xl max-h-[90vh] overflow-y-auto scrollbar-thin rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-slate-900/95 backdrop-blur px-6 py-4">
@@ -49,29 +83,38 @@ export default function ComparisonView({
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Similarity banner */}
+          {/* Similarity banner + match type badge */}
           <div
-            className="flex items-center justify-center gap-3 rounded-xl px-4 py-3"
+            className="flex flex-wrap items-center justify-center gap-3 rounded-xl px-4 py-3"
             style={{
-              backgroundColor: `${simColor}15`,
-              border: `1px solid ${simColor}40`,
+              backgroundColor: `${badgeColor}15`,
+              border: `1px solid ${badgeColor}40`,
             }}
           >
-            <span className="text-sm font-medium text-slate-200">Similarity</span>
+            <span className="text-sm font-medium text-slate-200">Final Similarity</span>
             <span
               className="text-2xl font-bold tabular-nums"
-              style={{ color: simColor }}
+              style={{ color: badgeColor }}
             >
               {similarity.toFixed(1)}%
             </span>
-            {exact && (
-              <span
-                className="ml-2 rounded-full px-3 py-0.5 text-xs font-semibold text-white"
-                style={{ backgroundColor: simColor }}
-              >
-                EXACT DUPLICATE
-              </span>
-            )}
+            <span
+              className="ml-2 rounded-full px-3 py-0.5 text-xs font-semibold text-white"
+              style={{ backgroundColor: badgeColor }}
+            >
+              {badgeLabel}
+            </span>
+          </div>
+
+          {/* Per-hash score breakdown */}
+          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+            <h4 className="text-sm font-semibold text-slate-200">Per-Hash Similarity Breakdown</h4>
+            <ScoreBar label="aHash (Average Hash)" score={ahash} color="#06b6d4" />
+            <ScoreBar label="dHash (Difference Hash)" score={dhash} color="#8b5cf6" />
+            <ScoreBar label="pHash (Perceptual Hash)" score={phash} color="#f59e0b" />
+            <div className="pt-2 border-t border-white/5">
+              <ScoreBar label="Final Score (weighted)" score={similarity} color={badgeColor} />
+            </div>
           </div>
 
           {/* Images side by side */}
