@@ -197,26 +197,6 @@ npm run build
 
 ---
 
-## 🏆 Hackathon Submission
-
-This project was built as a solution for a challenge requiring the use of **image hashing techniques** to detect duplicate and visually similar images.
-
-### Requirements Fulfilled
-
-✅ Image upload support
-
-✅ Duplicate image detection
-
-✅ Visual similarity detection
-
-✅ Image hashing techniques implemented
-
-✅ Similarity percentage calculation
-
-✅ Side-by-side comparison of matching images
-
----
-
 ## 🔒 Privacy
 
 All image processing occurs locally within the browser.
